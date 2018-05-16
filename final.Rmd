@@ -1,0 +1,341 @@
+---
+title: "Murder by Numbers"
+author: "Alex Yu"
+date: "May 14, 2018"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(message=FALSE, warning=FALSE)
+```
+
+## Introduction
+This will be a brief introduction to working with data using R. We will be looking at several topics including
+data management, hypothesis testing, and machine learning. With this simple tutorial, you should be able to
+get a general understanding of basic functions and techniques for data analysis.
+
+
+## Data Curation
+The data we will be using is from the [Murder Accountability Project](http://www.murderdata.org). They are an important nonprofit organization focused on collecting homicide records from federal, state, and local governments. The Murder Accountability Project holds law enforcement agencies accountable for any incorrect reports of homicide cases. We will take the homicide cases from the years 1976 to 2016 for the state of Maryland.
+
+First we will begin by loading the data. Using this code you will be able to load the data directly from this
+[website](https://cmsc320-final.github.io/Year_data).
+
+
+```{r DC}
+#libraries needed
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(ROCR)
+library(broom)
+library(tree)
+library(MASS)
+
+#read in data from the website and convert into a data frame
+csv_file <- "https://cmsc320-final.github.io/Year_data.csv"
+murder_df <- read_csv(csv_file)
+head(murder_df)
+
+```
+
+
+As you can see, there are 13 attributes which range from Agency to Year that describe each homicide case.
+For this 13 attribute data frame, We'll be working with 19,612 entities which are the individual cases for
+each homicide. You can learn more from [here](http://www.hcbravo.org/IntroDataSci/bookdown-notes/measurements-and-data-types.html).
+
+The entities are self explanatory; however, several of the variables are not entirely clear. Cntyfip stands for County FIPS code, but the information given is just the county names. MSA stands for Metropolitan Statistical Area. Finally
+circumstance refers to the type of incident surrounding the homicide.
+
+
+## Parsing and Management
+Many of the variables such as Agency, Circumstance, MSA, Number of Records, Solved, Source, State, and
+Weapon are irrelevant to our project. We will start or data management by cleaning up the unnecessary
+variables and renaming the remaining variables to ensure that their meanings are clear. To do this, we will
+use select(), mutate(), and names().
+
+To learn more about R operations, use this [site](http://www.hcbravo.org/IntroDataSci/bookdown-notes/principles-basic-operations.html).
+
+
+```{r PM}
+#Selecting the columns we need
+parsed_df <- murder_df%>%
+dplyr::select(Cntyfip, "Vic Age", "Vic Race", "Vic Sex", Year)%>%
+mutate(County = Cntyfip)%>%
+dplyr::select(-Cntyfip)
+
+
+#Creating clear column names
+names(parsed_df)[1] <- "Victim_Age"
+names(parsed_df)[2] <- "Victim_Race"
+names(parsed_df)[3] <- "Victim_Sex"
+
+
+#replace missing values with NA
+parsed_df$Victim_Age[parsed_df$Victim_Age==999]<-NA
+head(parsed_df)
+```
+
+
+The results above are what the data should look like after parsing and cleanup. If your results do not match
+the ones above, please review the code and retry the previous step. With this new parsed_df data frame, we
+can begin our data analysis.
+
+
+## Exploratory Data Analysis
+For exploratory data analysis, we will be looking at several properties of the data. These include the center also called the mean, range, spread also called the variance, outlier, and skew. The properties are general benchmarks that allow statisticians to make judgements about the data as a whole.
+
+Two very important functions here are the mean() and sd() functions which will produce the mean and standard deviation respectively. 
+
+When comparing data from two different sets, the mean and standard deviation become invaluable. These properties of the data set allow us to center and scale the data. When we combine centering and scaling, the data will become standardized. This will create a normal distribution and allow us to find significant differences in our data using hypothesis testing.
+
+Centering Data
+By using the mean, we can center the data by subtracting the mean from all of the entities of the variable of the data. This will produce a centered data set which means the modified data's new mean will be zero.
+
+Scaling Data
+Using the the standard deviation, we can scale the data by dividing all of the entities of the variable with it. This will produce a modified data set with a new standard deviation of one.
+
+Standardized Data
+When data becomes centered and scaled, the mean will become zero and the standard deviation will become one. This makes it easy to compare two different datasets since their start and units will be the same. To better understand this topic, use this simple [tutorial](http://www.statisticshowto.com/standardized-values-examples/).
+
+In this case, we will be working with the Victim Ages variable for each County. First we will need to get the properties of the data for each region. Using group_by() we can group the data by County variables. Then with the mean() and sd() functions along with the mutate() function, we can create columns to represent the mean and standard deviation for each County group in the data. 
+
+This will create a data frame with the means and standard deviations specific to each of the regions. To properly visualize that, we will merge the standardized_df into the parsed_df with the merge() function. By merging based on County, all of the county entities will have their respective means and standard deviations in the original table. After that, using the summarize() and select() functions and some basic arithmetic we can produce the standardized Victim Ages by County which will be named Standardized Victim Ages.
+
+Using the new Standardized Victim Age variable, we can now better visualize how standardizing the data affects it. With ggplot we can graph the standardized variables for each region.
+
+
+```{r EDA}
+#Calculate mean and standard deviation of Victim Age in a new data frame
+tidy_df <- parsed_df%>%
+  group_by(County)%>%
+  summarize(mean_victim_age=mean(Victim_Age,  na.rm=TRUE), sd_victim_age = sd(Victim_Age, na.rm=TRUE))
+
+
+#Get standard deviations and means for Victim Age per County
+head(tidy_df)
+
+
+#Combine the tables and create a standardized victim age variable
+tidy_dfstand <- parsed_df %>%
+  merge( y = tidy_df, by = "County", all.x = TRUE)%>%
+  mutate(standardized_victim_age = (Victim_Age-mean_victim_age)/sd_victim_age)
+head(tidy_dfstand)
+
+
+#Graph a histogram to visualize the standardized victim age distribution
+tidy_dfstand %>%
+ggplot(aes(x=standardized_victim_age, color=County)) +
+geom_histogram()+
+labs(title="Standardized Victim Age",
+x = "Standard Deviation")
+```
+
+
+As you can see, the new graph is slightly skewed right and has a few outliers on the left, but is generally in the form of a t distribution. 
+
+
+## Hypothesis Testing
+Now we will begin hypothesis testing. By looking at the data, the average victim age varies greatly across the different counties. The county I grew up in was Howard County which was known for its low crime rate. I want to compare this with Baltimore City which many people consider to have a high crime rate. The question I want to answer is if the difference between the Victim Age in Howard County and that of Baltimore City is statistically significant and Baltimore City has a lower average Victim Age. This would shed some light on how variables in crime can differ from a more urban population to a more suburban one.
+
+Our null hypothesis H~0~ is that the Victim Age data is not statistically different between Howard County and Baltimore City. Our alternative hypothesis H~1~ will be that the Victim Age data is lower in Baltimore City than it is in Howard County. 
+
+Types of Errors
+If we reject the null hypothesis when it is true that is a false positive error. It is considered a Type I error. The rate for this that is usually acceptable is five percent. If we accept the null hypothesis when it is false, it becomes a false negative error which is also called a Type II error.
+
+For this data, the threshold for deciding to reject the null hypothesis or not is alpha = .05 which means that we will reject the null hypothesis if it H~0~ is below the .05 value. This level of accuracy is in line with standard experiments.
+
+If you are still confused about this topic, please watch this [video](https://www.khanacademy.org/math/statistics-probability/significance-tests-confidence-intervals-two-samples/comparing-two-means/v/hypothesis-test-for-difference-of-means).
+
+We will be using the pt() function to calculate the p-value. Since the function requires a t-statistic and degrees of freedom, these are calculated first in the formulas below.
+
+
+```{r HP}
+#Get number of cases per region
+numbers <- parsed_df %>%
+group_by(County) %>%
+mutate(count = n())%>%
+dplyr::select(County, count)
+
+
+#remove duplicates
+numbers = numbers[!duplicated(numbers$County),]
+numbers = numbers[numbers$County == "Baltimore city, MD" | numbers$County == "Howard, MD" , ]
+numbers
+
+
+#Set variables for mean, standard deviation, and number
+Baltimore_mean = tidy_df$mean_victim_age[tidy_df$County=="Baltimore city, MD"]
+Baltimore_sd = tidy_df$sd_victim_age[tidy_df$County=="Baltimore city, MD"]
+Baltimore_num = numbers$count[numbers$County=="Baltimore city, MD"]
+Howard_mean = tidy_df$mean_victim_age[tidy_df$County=="Howard, MD"]
+Howard_sd = tidy_df$sd_victim_age[tidy_df$County=="Howard, MD"]
+Howard_num = numbers$count[numbers$County=="Howard, MD"]
+
+
+#set up the values for the pt function
+t_stat = (Howard_mean-Baltimore_mean)/sqrt(Howard_sd^2/Howard_num+Baltimore_sd^2/Baltimore_num)
+degrees_free = Baltimore_num-Howard_num-2
+
+
+#calculate the p value
+p_val=1-pt(t_stat, degrees_free)
+p_val
+
+```
+
+
+As seen above, the resulting p value is 0.04263656. Since this value is lower than the .05 limit, we can safely reject the null hypothesis. From this data we can conclude that Baltimore City's average Victim Age is statiistically lower than the average Victim Age of Howard County.
+
+
+## Machine Learning
+Finally, we will be taking a look at machine learning. For this, we can try to answer a new question. How well can we predict average Victim Age per year using different types of models? The models we will use are the [linear regression](http://www.hcbravo.org/IntroDataSci/bookdown-notes/linear-regression.html) and the [tree model](http://www.hcbravo.org/IntroDataSci/bookdown-notes/tree-based-methods.html). 
+
+The test data results will be the average Victim Age for each County in the year 2016. Then each model will train using the data from the previous years. After training, each model will extrapolate a prediction for average Victim Age in each County for 2016. This prediction will then be compared to the actual result for the County. 
+
+To decide which model is a more accurate predictor, we will be comparing the models using AUROC which stands for Area Under an ROC curve. It allows us to compare how effective each model is for predicting average Victim Age per year. Generally, the larger the Area Under the ROC curve, the better the model is at predicting. Here is a simple explanation of AUROC from a [UMNC site](http://gim.unmc.edu/dxtests/roc3.htm).
+
+We will begin by summarizing mean victim age by year and county. There will be a graph to help visualize how much the data can change year by year. Afterwards we will start preparing the training and testing data sets. The training data set will be all mean victim ages pre 2016 and the testing data set will be the 2016 one.
+
+
+```{r ML}
+#calculate average victim age per year per county
+ml_df <- parsed_df %>%
+  group_by(Year, County)%>%
+  summarize(mean_victim_age=mean(Victim_Age,  na.rm=TRUE))
+head(ml_df)
+
+
+#graph the average victim ages per year per county
+ml_df %>%
+  ggplot(aes(x=Year,y=mean_victim_age,group=factor(County))) +
+  geom_line(color="GRAY") +
+  labs(title="County Average Victim Age over Time",
+          x="Year", y="Average Victim Age")
+
+
+#Calculate results for testing confirmation
+test_df <- ml_df %>%
+  filter(Year>2015)
+
+test_df2 <- ml_df %>%
+  filter(Year==2015)%>%
+  merge(test_df, by = "County", all.x = TRUE)%>%
+  mutate(age_change = mean_victim_age.y - mean_victim_age.x)%>%
+  dplyr::select(County, age_change)
+
+test_df2
+head(cbind(predicted_move ="test", test_df2))
+test_df2$predicted_move[test_df2$age_change>=0] <-"positive"
+test_df2$predicted_move[test_df2$age_change<0] <-"negative"
+
+head(test_df2)
+
+
+#setup input data
+training_df <- ml_df %>%
+  filter(Year<2016)
+
+input_df2 <- ml_df %>%
+  filter(Year==2016)
+
+```
+
+
+After preparing the data sets, we will start creating the models to test out data. Since we are using the linear regression model and the tree model, we will be using the lm() and tree() functions respectively. Once we have created our model we test it on predicted data. The results are labeled and put into the predicted and observed table. This is then used to calculate False Positive Rate and True Positive Rate which will be used in turn to calculate AUROC. Finally, to help visualize the data we will graph the AUROC curves of each model.
+
+
+```{r Models}
+#create the models for the data with linear regression and tree model
+#First is the linear regression model
+lreg <- lm(mean_victim_age~Year*County, data=training_df)
+input_df2$lreg_move <- predict(lreg, input_df2) #Get predicted values
+
+#Merge into an original table and sort the change in predicted value as positive or negative
+lreg_final <- input_df2%>%
+  merge(test_df2, by= "County", all.x = TRUE)
+
+lreg_final <- ml_df %>%
+  filter(Year==2015)%>%
+  merge(lreg_final, by = "County", all.x = TRUE)%>%
+  mutate(lreg_age_change = lreg_move - mean_victim_age.x)%>%
+  dplyr::select(County, age_change, predicted_move,lreg_age_change)
+
+lreg_final$lreg_predicted_move[lreg_final$lreg_age_change>=0] <-"positive"
+lreg_final$lreg_predicted_move[lreg_final$lreg_age_change<0] <-"negative"
+lreg_final
+
+tabs <- table(predicted=lreg_final$lreg_predicted_move, observed=lreg_final$predicted_move)
+print(tabs)
+
+
+
+#Calculate False Positive Rate, True Positive Rate, and Area for Linear Regression
+sFPR =  tabs[1,"positive"]/(tabs[1,"positive"]+tabs[2,"positive"])
+sTPR =  tabs[1,"negative"]/(tabs[1,"negative"]+tabs[2,"negative"])
+sArea = sTPR*(sFPR)/2+(1-sFPR)*(sTPR+1)/2
+
+
+#Linear Regression AUROC
+plot(x=c(0,sFPR,1), y=c(0,sTPR,1), 
+    main=paste("LinReg for Mean Age Per AUROC=", sArea), type = "l",
+    xlab="False Positive Rate", ylab="True Positive Rate",
+    lwd=1.4, cex.lab=1.7, cex.main=1.5)
+
+
+#tree model
+tree_model <- tree(mean_victim_age~Year, data=training_df)
+input_df2$tree_move <- predict(tree_model, newdata=input_df2) #get predicted values
+
+#Merge into an original table and sort the change in predicted value as positive or negative
+tree_final <- input_df2%>%
+  merge(test_df2, by= "County", all.x = TRUE)
+
+tree_final <- ml_df %>%
+  filter(Year==2015)%>%
+  merge(tree_final, by = "County", all.x = TRUE)%>%
+  mutate(tree_age_change = tree_move- mean_victim_age.x)%>%
+  dplyr::select(County, age_change, predicted_move,tree_age_change)
+
+tree_final$tree_predicted_move[tree_final$tree_age_change>=0] <-"positive"
+tree_final$tree_predicted_move[tree_final$tree_age_change<0] <-"negative"
+tree_final
+
+tabs <- table(predicted=tree_final$tree_predicted_move, observed=tree_final$predicted_move)
+print(tabs)
+
+#Calculate False Positive Rate, True Positive Rate, and Area for Tree model
+rFPR =  tabs[1,"positive"]/(tabs[1,"positive"]+tabs[2,"positive"])
+rTPR =  tabs[1,"negative"]/(tabs[1,"negative"]+tabs[2,"negative"])
+rArea = rTPR*(rFPR)/2+(1-rFPR)*(rTPR+1)/2
+
+
+#Tree model AUROC
+plot(x=c(0,rFPR,1), y=c(0,rTPR,1), 
+    main=paste("Tree Model for Mean Age AUROC=", rArea), type = "l",
+    xlab="False Positive Rate", ylab="True Positive Rate",
+    lwd=1.4, cex.lab=1.7, cex.main=1.5)
+
+```
+
+
+From the AUROC graphs above, you can tell that the tree model was significantly more effective at predicting the change in Mean Victim Age for the year of 2016. Its AUROC was a .909 value while the linear regression AUROc was only a .689 value.
+
+
+## Conclusion
+To summarize the topics we covered, we started by learning how to load, parse, and manage data. Being able to move and manipulate the data frame opened up opportunities to work with the data. 
+
+Expanding on these skills, we used exploratory data analysis to identify the defining characteristics of the data such as skew, mean, and standard deviation. The results of the data analysis were recorded and then were later used to for our hypothesis testing. Here we tried a real world application of our data science skills by using Hypothesis testing to determine if the Victim Ages of  Howard County and Baltimore City were statistically different. The results allowed us to conclude that Baltimore city had a statistically lower average Victim Age because the p value was below the .05 limit. 
+
+Lastly, we ended with some simple machine learning practice to see how to build and test models. We trained a linear and logistic model to predict average Victim Age by Year. To test which model was more accurate, we used AUROC or Area Under a ROC curve to measure the model effectiveness. Afterwards we could conclude that the tree model was more accurate because it had a higher AUROC.
+
+I hope you have enjoyed learning from this tutorial as much as I have enjoyed making it. Data analytics is an important field and it will only grow more valuable as technology advances. Companies and people are generating more and more data everyday, so the demand for data scientists who will analyze it will be growing for the foreseeable future.
+
+
+
+
+
+
+
